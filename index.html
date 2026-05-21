@@ -166,7 +166,20 @@
     const SUPABASE_URL = 'https://twrlvnfszohyrmivdhre.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_xnDjiN2NRly0mU4aRMpLjA_HVqqcjxI';
     const REDIRECT_URL = window.location.origin + window.location.pathname;
-    const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    // Isolated auth namespace — the CC at alessio.azcustomknives.com uses the default
+    // `sb-twrlvnfszohyrmivdhre-auth-token` key, and supabase-js v2 grabs a
+    // navigator.locks lock on it. When both pages share the same origin (this page
+    // served at /intern.html), the CC's lock blocks our getSession() forever.
+    // Distinct storageKey + lock key = independent sessions, no contention.
+    const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: {
+        storageKey: 'sb-azck-intern-auth-token',
+        lock: (name, acquireTimeout, fn) => fn(),  // bypass cross-tab lock — single-user session per browser
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      }
+    });
 
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const WD     = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
