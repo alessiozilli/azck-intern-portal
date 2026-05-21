@@ -105,14 +105,30 @@
     .day__status     { font-family:var(--mono); font-size:10px; color:var(--text-dim); }
     .day.today .day__status { color:#fff; font-weight:700; }
 
-    .day__activity { font-size:13px; color:var(--text); margin-bottom:6px; line-height:1.45; }
+    .day__activity { font-size:13px; color:var(--text); margin-bottom:8px; line-height:1.45; }
     .day__activity.placeholder { color:var(--text-xs); font-style:italic; }
-    .day__notes { width:100%; min-height:36px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; font-family:var(--sans); font-size:12px; line-height:1.45; resize:vertical; box-sizing:border-box; }
-    .day__notes:focus { outline:none; border-color:var(--azck-red); }
-    .day.today .day__notes { min-height:80px; border-color:var(--azck-red-dim); }
-    .day__notes[data-save-state="typing"] { border-color:var(--text-xs); }
-    .day__notes[data-save-state="saved"]  { border-color:var(--azck-red); }
-    .day__notes[data-save-state="error"]  { border-color:#e5534b; }
+
+    /* Conversation thread per day */
+    .day__thread { display:flex; flex-direction:column; gap:6px; margin:6px 0 10px; }
+    .msg { padding:6px 10px; border-left:2px solid var(--border); background:rgba(255,255,255,0.02); max-width:92%; }
+    .msg__head { display:flex; gap:8px; align-items:baseline; font-family:var(--mono); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:3px; }
+    .msg__who { font-weight:700; }
+    .msg__time { color:var(--text-xs); }
+    .msg__text { font-size:13px; color:var(--text); line-height:1.45; white-space:pre-wrap; word-wrap:break-word; }
+    .msg--intern   { border-left-color:var(--azck-red); background:rgba(153,0,0,0.10); align-self:flex-end; }
+    .msg--intern   .msg__who { color:var(--azck-red-hi); }
+    .msg--alessio  { border-left-color:#5da0ff; background:rgba(93,160,255,0.08); }
+    .msg--alessio  .msg__who { color:#7ab3ff; }
+    .msg--reanna   { border-left-color:#7bcfa6; background:rgba(123,207,166,0.08); }
+    .msg--reanna   .msg__who { color:#9be0bd; }
+
+    .day__reply { display:flex; gap:6px; margin-top:6px; align-items:flex-end; }
+    .day__reply-input { flex:1; min-height:34px; max-height:160px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:7px 10px; font-family:var(--sans); font-size:12px; line-height:1.4; resize:vertical; }
+    .day__reply-input:focus { outline:none; border-color:var(--azck-red); }
+    .day.today .day__reply-input { border-color:var(--azck-red-dim); }
+    .day__reply-send { background:var(--azck-red); color:#fff; border:0; padding:8px 14px; font-family:var(--sans); font-size:11px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; height:34px; }
+    .day__reply-send:hover { background:var(--azck-red-hi); }
+    .day__reply-send:disabled { background:var(--muted); cursor:wait; }
 
     .no-access { text-align:center; padding:60px 20px; }
     .no-access h2 { font-family:var(--display); font-size:22px; color:var(--azck-red); margin:0 0 12px; }
@@ -234,14 +250,20 @@
 
       // Load companion data in parallel
       const internId = intern.id;
-      const [phaseRes, schedRes, notesRes] = await Promise.all([
+      const [phaseRes, schedRes, msgsRes] = await Promise.all([
         supa.from('intern_phases').select('tag, label, start_date, end_date, description').eq('intern_id', internId).order('start_date', { ascending:true }),
         supa.from('intern_schedule').select('day_date, activity').eq('intern_id', internId),
-        supa.from('intern_notes').select('day_date, notes').eq('intern_id', internId),
+        supa.from('intern_messages').select('id, day_date, author, text, created_at').eq('intern_id', internId).order('created_at', { ascending:true }),
       ]);
       const phases   = phaseRes.data || [];
       const schedMap = Object.fromEntries((schedRes.data || []).map(r => [r.day_date, r.activity || '']));
-      const notesMap = Object.fromEntries((notesRes.data || []).map(r => [r.day_date, r.notes || '']));
+      // Group messages by day_date
+      const msgsByDay = {};
+      (msgsRes.data || []).forEach(m => {
+        (msgsByDay[m.day_date] = msgsByDay[m.day_date] || []).push(m);
+      });
+      // Stash globals so the reply handler can use them
+      window._internCtx = { internId, slug: intern.slug, isStaff: false /* this is the intern portal */, msgsByDay };
 
       // Build day list from start - 6 days to align Monday, through end
       const startISO = intern.start_date;
@@ -284,7 +306,7 @@
           dayNum: status === 'closed' ? null : dayCounter,
           holidayLabel: HOLIDAYS[isoDate] || (isWeekend ? (dow === 0 ? 'Sunday' : 'Saturday · closed unless course') : null),
           activity: schedMap[isoDate] || '',
-          notes:    notesMap[isoDate] || '',
+          messages: msgsByDay[isoDate] || [],
         });
       }
       const totalWorkDays = dayCounter;
@@ -327,7 +349,7 @@
         html += '</div>';
 
         wk.days.forEach(day => {
-          html += '<div class="day ' + day.status + '">';
+          html += '<div class="day ' + day.status + '" data-day="' + day.iso + '">';
           html += '<div class="day__date"><div class="day__num">' + day.date + '</div><div class="day__wd">' + WD[day.dow] + '</div></div>';
           html += '<div class="day__meta">';
           if (day.status === 'closed') html += '<div class="day__tag muted">—</div>';
@@ -345,8 +367,23 @@
             } else if (day.status === 'today') {
               html += '<div class="day__activity placeholder">Today\'s plan set by Alessio at start of day</div>';
             }
-            const placeholder = day.status === 'today' ? 'Notes for today — what worked, what was hard, what tomorrow…' : (day.status === 'past' ? 'No notes for this day' : 'Notes…');
-            html += '<textarea class="day__notes" placeholder="' + placeholder + '" data-day="' + day.iso + '" oninput="window.saveOwnNote(' + JSON.stringify(internId) + ', this.dataset.day, this.value, this)">' + escapeHtml(day.notes) + '</textarea>';
+            // Conversation thread for this day
+            if (day.messages.length){
+              html += '<div class="day__thread">';
+              for (const m of day.messages){
+                html += '<div class="msg msg--' + escapeHtml(m.author) + '">';
+                html += '<div class="msg__head"><span class="msg__who">' + escapeHtml(m.author) + '</span><span class="msg__time">' + escapeHtml(formatMsgTime(m.created_at)) + '</span></div>';
+                html += '<div class="msg__text">' + escapeHtml(m.text) + '</div>';
+                html += '</div>';
+              }
+              html += '</div>';
+            }
+            // Reply input + send button (intern can only post as 'intern')
+            const replyPlaceholder = day.status === 'today' ? 'Write a message for today…' : (day.status === 'past' ? 'Add a note to this day…' : 'Write a message…');
+            html += '<div class="day__reply">';
+            html += '<textarea class="day__reply-input" data-day="' + day.iso + '" placeholder="' + replyPlaceholder + '" onkeydown="if(event.key===\'Enter\' && (event.metaKey||event.ctrlKey)){ event.preventDefault(); this.nextElementSibling.click(); }"></textarea>';
+            html += '<button class="day__reply-send" onclick="window.postInternMessage(\'' + day.iso + '\', this)">Send</button>';
+            html += '</div>';
           }
           html += '</div></div>';
         });
@@ -371,28 +408,62 @@
       document.getElementById('portalContent').innerHTML = html;
     }
 
-    // ── Notes save (debounced) ────────────────────────────────────────
-    const saveTimers = {};
-    window.saveOwnNote = function(internId, date, value, el){
-      const key = internId + '|' + date;
-      clearTimeout(saveTimers[key]);
-      if (el) el.dataset.saveState = 'typing';
-      saveTimers[key] = setTimeout(async () => {
-        try {
-          const { error } = await supa.from('intern_notes').upsert({
-            intern_id: internId,
-            day_date: date,
-            notes: value,
-            written_by: 'intern'
-          }, { onConflict: 'intern_id,day_date' });
-          if (error){ if (el) el.dataset.saveState = 'error'; return; }
-          if (el){
-            el.dataset.saveState = 'saved';
-            setTimeout(() => { if (el.dataset.saveState === 'saved') el.dataset.saveState = ''; }, 1500);
-          }
-        } catch(e){ if (el) el.dataset.saveState = 'error'; }
-      }, 600);
+    // ── Conversation thread ────────────────────────────────────────────
+    function formatMsgTime(iso){
+      const d = new Date(iso);
+      const today = new Date(); today.setHours(0,0,0,0);
+      const isToday = (d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate());
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      if (isToday) return hh + ':' + mm;
+      return MONTHS[d.getMonth()] + ' ' + d.getDate() + ' · ' + hh + ':' + mm;
+    }
+
+    // Intern-side post — author always 'intern' (RLS enforces this)
+    window.postInternMessage = async function(date, btn){
+      const ta = btn.previousElementSibling;
+      const text = (ta.value || '').trim();
+      if (!text) return;
+      const ctx = window._internCtx;
+      if (!ctx){ console.warn('[interns] no context'); return; }
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const { data: row, error } = await supa.from('intern_messages').insert({
+          intern_id: ctx.internId,
+          day_date: date,
+          author: 'intern',
+          text
+        }).select('id, day_date, author, text, created_at').single();
+        if (error) throw error;
+        // Append locally + clear input — no need for full reload
+        (ctx.msgsByDay[date] = ctx.msgsByDay[date] || []).push(row);
+        appendMessageToDay(date, row);
+        ta.value = '';
+      } catch(e){
+        console.warn('[interns] post failed', e);
+        btn.style.background = '#e5534b';
+      } finally {
+        btn.disabled = false; btn.textContent = 'Send';
+      }
     };
+
+    function appendMessageToDay(date, msg){
+      const dayEl = document.querySelector('.day[data-day="' + date + '"]');
+      if (!dayEl) return;
+      let thread = dayEl.querySelector('.day__thread');
+      if (!thread){
+        thread = document.createElement('div');
+        thread.className = 'day__thread';
+        const replyEl = dayEl.querySelector('.day__reply');
+        if (replyEl) replyEl.parentNode.insertBefore(thread, replyEl);
+      }
+      const div = document.createElement('div');
+      div.className = 'msg msg--' + msg.author;
+      div.innerHTML =
+        '<div class="msg__head"><span class="msg__who">' + escapeHtml(msg.author) + '</span><span class="msg__time">' + escapeHtml(formatMsgTime(msg.created_at)) + '</span></div>' +
+        '<div class="msg__text">' + escapeHtml(msg.text) + '</div>';
+      thread.appendChild(div);
+    }
 
     // ── Boot ──────────────────────────────────────────────────────────
     (async function boot(){
