@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>AZCK Intern Portal</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&family=Oswald:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    /* ═══════════════════════════════════════════════════════════════════════
+       AZCK Intern Portal — Phase 1 (login + schedule, with notes per day)
+       Brand: black / white / Forge Red #990000 (locked 2026-05-19)
+       Reads its own data via Supabase. RLS pins each intern to own rows.
+       ═══════════════════════════════════════════════════════════════════════ */
+    :root {
+      --azck-red:    #990000;
+      --azck-red-hi: #cc1f1f;
+      --azck-red-dim: rgba(153,0,0,0.18);
+      --bg:          #000000;
+      --surface:     #0d0d0d;
+      --raised:      #1a1a1a;
+      --border:      #2a2a2a;
+      --border-hi:   #444444;
+      --text:        #ffffff;
+      --text-dim:    #b8b8b8;
+      --text-xs:     #7a7a7a;
+      --muted:       #4a4a4a;
+      --sans:        'Lexend', system-ui, -apple-system, sans-serif;
+      --display:     'Oswald', 'Lexend', sans-serif;
+      --mono:        'JetBrains Mono', ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family:var(--sans); font-size:14px; line-height:1.5; -webkit-text-size-adjust:100%; }
+    body { min-height:100vh; min-height:100dvh; }
+    a { color:var(--azck-red-hi); text-decoration:none; }
+    a:hover { color:var(--text); }
+    button { font-family:inherit; font-size:inherit; cursor:pointer; }
+    input, textarea { font-family:inherit; }
+
+    /* ── Loading splash ───────────────────────────────────────────────── */
+    #boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--bg); color:var(--text-xs); font-family:var(--mono); font-size:11px; letter-spacing:0.2em; text-transform:uppercase; z-index:9999; }
+
+    /* ── Sign-in screen ───────────────────────────────────────────────── */
+    .signin { min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px; }
+    .signin__card { width:100%; max-width:380px; padding:32px 28px; background:var(--surface); border:1px solid var(--border); border-top:3px solid var(--azck-red); }
+    .signin__brand { font-family:var(--display); font-size:24px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--text); margin:0 0 4px; }
+    .signin__brand span { color:var(--azck-red); }
+    .signin__sub { font-family:var(--mono); font-size:11px; letter-spacing:0.16em; text-transform:uppercase; color:var(--text-xs); margin:0 0 24px; }
+    .signin__label { display:block; font-family:var(--mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--text-xs); margin-bottom:6px; }
+    .signin__input { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:12px 14px; font-size:14px; font-family:var(--sans); }
+    .signin__input:focus { outline:none; border-color:var(--azck-red); }
+    .signin__btn { width:100%; margin-top:16px; padding:13px 16px; background:var(--azck-red); color:#fff; border:0; font-family:var(--sans); font-size:13px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; }
+    .signin__btn:hover { background:var(--azck-red-hi); }
+    .signin__btn:disabled { background:var(--muted); cursor:wait; }
+    .signin__hint { font-size:11px; color:var(--text-xs); margin-top:14px; line-height:1.5; }
+    .signin__msg { margin-top:14px; padding:10px 12px; font-size:12px; line-height:1.4; }
+    .signin__msg.ok  { background:var(--azck-red-dim); color:#fff; border-left:2px solid var(--azck-red); }
+    .signin__msg.err { background:rgba(229,83,75,0.12); color:#ff8a82; border-left:2px solid #e5534b; }
+
+    /* ── Portal layout ───────────────────────────────────────────────── */
+    .portal { min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; }
+    .portal__header { position:sticky; top:0; z-index:20; background:rgba(0,0,0,0.92); backdrop-filter:saturate(140%) blur(8px); border-bottom:1px solid var(--border); padding:14px 18px; display:flex; align-items:center; gap:14px; }
+    .portal__brand { font-family:var(--display); font-size:14px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:var(--text); }
+    .portal__brand span { color:var(--azck-red); }
+    .portal__user { margin-left:auto; display:flex; flex-direction:column; align-items:flex-end; gap:2px; }
+    .portal__user-name { font-size:12px; color:var(--text-dim); }
+    .portal__signout { background:transparent; border:1px solid var(--border); color:var(--text-dim); padding:6px 12px; font-size:11px; font-family:var(--mono); letter-spacing:0.1em; text-transform:uppercase; }
+    .portal__signout:hover { border-color:var(--azck-red); color:var(--text); }
+
+    .portal__main { flex:1; padding:18px; max-width:880px; width:100%; margin:0 auto; }
+
+    /* ── Identity strip ─────────────────────────────────────────────── */
+    .id-strip { padding:6px 0 18px; border-bottom:1px solid var(--border); margin-bottom:18px; }
+    .id-strip__top { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+    .id-strip__name { font-family:var(--display); font-size:26px; font-weight:700; letter-spacing:0.02em; color:var(--text); }
+    .id-strip__flag { font-size:18px; color:var(--text-dim); font-family:var(--mono); font-weight:600; }
+    .id-strip__pill { margin-left:auto; font-family:var(--mono); font-size:10px; padding:4px 10px; background:var(--azck-red); color:#fff; text-transform:uppercase; letter-spacing:0.14em; font-weight:600; }
+    .id-strip__sub { font-size:12px; color:var(--text-dim); margin-top:5px; }
+
+    /* ── Week + day rows ───────────────────────────────────────────── */
+    .wk { margin:18px 0 8px; }
+    .wk__head { display:flex; align-items:baseline; gap:12px; padding:8px 12px; background:var(--raised); border-left:2px solid var(--azck-red); flex-wrap:wrap; }
+    .wk__num { font-family:var(--display); font-size:12px; font-weight:700; color:var(--azck-red-hi); letter-spacing:0.14em; text-transform:uppercase; }
+    .wk__range { font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+    .wk__phase { margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--text-xs); letter-spacing:0.1em; text-transform:uppercase; }
+
+    .day { display:grid; grid-template-columns:54px 100px 1fr; gap:14px; padding:10px 12px; border-bottom:1px solid var(--border); align-items:start; }
+    .day.closed { opacity:0.35; }
+    .day.today { background:var(--azck-red-dim); border-left:3px solid var(--azck-red); padding-left:9px; }
+    .day.past  { opacity:0.75; }
+
+    .day__date { font-family:var(--mono); line-height:1; }
+    .day__num  { font-size:22px; font-weight:700; color:var(--text); }
+    .day__wd   { font-size:10px; color:var(--text-xs); text-transform:uppercase; letter-spacing:0.12em; margin-top:4px; }
+    .day.today .day__num { color:var(--azck-red-hi); }
+
+    .day__meta { display:flex; flex-direction:column; gap:5px; }
+    .day__tag  { font-family:var(--mono); font-size:9px; padding:2px 7px; background:var(--azck-red); color:#fff; text-transform:uppercase; letter-spacing:0.1em; font-weight:700; display:inline-block; width:fit-content; }
+    .day__tag.b      { background:#1f6028; }
+    .day__tag.c      { background:#1f3f7a; }
+    .day__tag.muted  { background:var(--raised); color:var(--text-xs); border:1px solid var(--border); }
+    .day__status     { font-family:var(--mono); font-size:10px; color:var(--text-dim); }
+    .day.today .day__status { color:#fff; font-weight:700; }
+
+    .day__activity { font-size:13px; color:var(--text); margin-bottom:6px; line-height:1.45; }
+    .day__activity.placeholder { color:var(--text-xs); font-style:italic; }
+    .day__notes { width:100%; min-height:36px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px 10px; font-family:var(--sans); font-size:12px; line-height:1.45; resize:vertical; box-sizing:border-box; }
+    .day__notes:focus { outline:none; border-color:var(--azck-red); }
+    .day.today .day__notes { min-height:80px; border-color:var(--azck-red-dim); }
+    .day__notes[data-save-state="typing"] { border-color:var(--text-xs); }
+    .day__notes[data-save-state="saved"]  { border-color:var(--azck-red); }
+    .day__notes[data-save-state="error"]  { border-color:#e5534b; }
+
+    .no-access { text-align:center; padding:60px 20px; }
+    .no-access h2 { font-family:var(--display); font-size:22px; color:var(--azck-red); margin:0 0 12px; }
+    .no-access p { color:var(--text-dim); margin:0 0 8px; }
+
+    /* ── Mobile tweaks ──────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .portal__main { padding:14px; }
+      .id-strip__pill { margin-left:0; }
+      .day { grid-template-columns:46px 82px 1fr; gap:10px; padding:10px 8px; }
+      .day__num { font-size:20px; }
+      .id-strip__name { font-size:22px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="boot">Loading…</div>
+
+  <!-- ── SIGN-IN SCREEN ───────────────────────────────────────────────── -->
+  <section id="signin" class="signin" style="display:none">
+    <div class="signin__card">
+      <h1 class="signin__brand">AZ<span>CK</span> · Interns</h1>
+      <p class="signin__sub">Custom Knives — your stay</p>
+
+      <label class="signin__label" for="email">Your email</label>
+      <input class="signin__input" id="email" type="email" placeholder="you@example.com" autocomplete="email" autocapitalize="off" spellcheck="false">
+      <button class="signin__btn" id="sendBtn" onclick="sendMagicLink()">Send sign-in link</button>
+      <div id="signinMsg"></div>
+      <p class="signin__hint">We email you a one-time sign-in link. No password.</p>
+    </div>
+  </section>
+
+  <!-- ── PORTAL SCREEN ────────────────────────────────────────────────── -->
+  <section id="portal" class="portal" style="display:none">
+    <header class="portal__header">
+      <div class="portal__brand">AZ<span>CK</span> · Interns</div>
+      <div class="portal__user">
+        <div class="portal__user-name" id="userName">—</div>
+        <button class="portal__signout" onclick="signOut()">Sign out</button>
+      </div>
+    </header>
+
+    <main class="portal__main">
+      <div id="portalContent"></div>
+    </main>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script>
+    'use strict';
+    const SUPABASE_URL = 'https://twrlvnfszohyrmivdhre.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_xnDjiN2NRly0mU4aRMpLjA_HVqqcjxI';
+    const REDIRECT_URL = window.location.origin + window.location.pathname;
+    const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const WD     = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const TODAY  = (function(){ const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+
+    function iso(d){ const m = String(d.getMonth()+1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0'); return d.getFullYear() + '-' + m + '-' + dd; }
+    function parseISO(s){ return new Date(s + 'T00:00:00'); }
+    function shortDate(s){ const d = parseISO(s); return MONTHS[d.getMonth()] + ' ' + d.getDate(); }
+    function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+    function show(which){
+      document.getElementById('boot').style.display    = (which === 'boot')    ? 'flex' : 'none';
+      document.getElementById('signin').style.display  = (which === 'signin')  ? 'flex' : 'none';
+      document.getElementById('portal').style.display  = (which === 'portal')  ? 'flex' : 'none';
+    }
+    function setSigninMsg(text, kind){
+      const el = document.getElementById('signinMsg');
+      if (!text){ el.innerHTML = ''; return; }
+      el.innerHTML = '<div class="signin__msg ' + (kind || 'ok') + '">' + escapeHtml(text) + '</div>';
+    }
+
+    // ── Magic-link sign-in ─────────────────────────────────────────────
+    window.sendMagicLink = async function(){
+      const email = (document.getElementById('email').value || '').trim().toLowerCase();
+      if (!email || !email.includes('@')){ setSigninMsg('Type your email address first.', 'err'); return; }
+      const btn = document.getElementById('sendBtn'); btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const { error } = await supa.auth.signInWithOtp({ email, options: { emailRedirectTo: REDIRECT_URL } });
+        if (error) throw error;
+        setSigninMsg('Sign-in link sent to ' + email + ' — check your inbox.', 'ok');
+      } catch(e){
+        setSigninMsg('Could not send: ' + (e.message || e), 'err');
+      } finally {
+        btn.disabled = false; btn.textContent = 'Send sign-in link';
+      }
+    };
+
+    window.signOut = async function(){
+      await supa.auth.signOut();
+      window.location.replace(REDIRECT_URL);
+    };
+
+    // ── Portal render ─────────────────────────────────────────────────
+    async function loadPortal(session){
+      const email = (session.user && session.user.email || '').toLowerCase();
+      document.getElementById('userName').textContent = email;
+
+      // Fetch the intern row matching the signed-in email
+      const { data: intern, error: e1 } = await supa.from('interns').select('*').eq('email', email).maybeSingle();
+      if (e1){ renderNoAccess(email, e1.message); return; }
+      if (!intern){ renderNoAccess(email, null); return; }
+
+      // Load companion data in parallel
+      const internId = intern.id;
+      const [phaseRes, schedRes, notesRes] = await Promise.all([
+        supa.from('intern_phases').select('tag, label, start_date, end_date, description').eq('intern_id', internId).order('start_date', { ascending:true }),
+        supa.from('intern_schedule').select('day_date, activity').eq('intern_id', internId),
+        supa.from('intern_notes').select('day_date, notes').eq('intern_id', internId),
+      ]);
+      const phases   = phaseRes.data || [];
+      const schedMap = Object.fromEntries((schedRes.data || []).map(r => [r.day_date, r.activity || '']));
+      const notesMap = Object.fromEntries((notesRes.data || []).map(r => [r.day_date, r.notes || '']));
+
+      // Build day list from start - 6 days to align Monday, through end
+      const startISO = intern.start_date;
+      const endISO   = intern.end_date;
+      const startD = parseISO(startISO);
+      const rangeStart = new Date(startD);
+      while (rangeStart.getDay() !== 1) rangeStart.setDate(rangeStart.getDate() - 1); // Monday of week 1
+      const endD = parseISO(endISO);
+
+      const HOLIDAYS = {
+        '2026-05-18': 'Victoria Day · stat',
+        '2026-07-01': 'Canada Day · stat',
+        '2026-08-03': 'Heritage Day · stat',
+        '2026-09-07': 'Labour Day · stat',
+      };
+
+      function phaseFor(isoDate){
+        for (const p of phases){ if (isoDate >= p.start_date && isoDate <= p.end_date) return p; }
+        return null;
+      }
+
+      const days = [];
+      let dayCounter = 0;
+      for (let d = new Date(rangeStart); d <= endD; d.setDate(d.getDate() + 1)){
+        const isoDate = iso(d);
+        const dow = d.getDay();
+        const isHoliday = !!HOLIDAYS[isoDate];
+        const isWeekend = (dow === 0 || dow === 6);
+        const isBeforeStart = isoDate < startISO;
+        const isClosed = isWeekend || isHoliday || isBeforeStart;
+        const ph = phaseFor(isoDate);
+        let status;
+        if (isClosed) status = 'closed';
+        else if (isoDate < TODAY) status = 'past';
+        else if (isoDate === TODAY) status = 'today';
+        else status = 'future';
+        if (status !== 'closed') dayCounter++;
+        days.push({
+          iso: isoDate, dow, date: d.getDate(), status, phase: ph,
+          dayNum: status === 'closed' ? null : dayCounter,
+          holidayLabel: HOLIDAYS[isoDate] || (isWeekend ? (dow === 0 ? 'Sunday' : 'Saturday · closed unless course') : null),
+          activity: schedMap[isoDate] || '',
+          notes:    notesMap[isoDate] || '',
+        });
+      }
+      const totalWorkDays = dayCounter;
+
+      // Group by Monday
+      const weeks = [];
+      let curr = null;
+      days.forEach((day, i) => {
+        if (i === 0 || day.dow === 1){ curr = { days:[] }; weeks.push(curr); }
+        curr.days.push(day);
+      });
+
+      // Identity strip + week list
+      const todayEntry = days.find(d => d.status === 'today');
+      const progress = todayEntry
+        ? 'Day ' + todayEntry.dayNum + ' of ' + totalWorkDays + ' · Phase ' + (todayEntry.phase ? todayEntry.phase.tag : '—')
+        : (TODAY < startISO ? 'Starts ' + WD[parseISO(startISO).getDay()] + ' ' + shortDate(startISO) : 'Stay complete');
+
+      let html = '';
+      html += '<div class="id-strip">';
+      html += '<div class="id-strip__top">';
+      html += '<div class="id-strip__name">' + escapeHtml(intern.full_name) + '</div>';
+      if (intern.flag) html += '<div class="id-strip__flag">' + escapeHtml(intern.flag) + '</div>';
+      html += '<div class="id-strip__pill">' + escapeHtml(progress) + '</div>';
+      html += '</div>';
+      html += '<div class="id-strip__sub">' + shortDate(startISO) + ' → ' + shortDate(endISO) + ' · ' + (intern.weeks || '?') + '-week stay';
+      if (intern.capstone) html += ' · capstone ' + escapeHtml(intern.capstone);
+      if (intern.transport) html += ' · ' + escapeHtml(intern.transport);
+      html += '</div></div>';
+
+      weeks.forEach((wk, wi) => {
+        if (!wk.days.length) return;
+        const first = wk.days[0], last = wk.days[wk.days.length-1];
+        const phase = wk.days.map(d => d.phase).find(Boolean);
+        html += '<div class="wk">';
+        html += '<div class="wk__head">';
+        html += '<div class="wk__num">Week ' + (wi+1) + '</div>';
+        html += '<div class="wk__range">' + shortDate(first.iso) + ' → ' + shortDate(last.iso) + '</div>';
+        if (phase) html += '<div class="wk__phase">Phase ' + escapeHtml(phase.label) + '</div>';
+        html += '</div>';
+
+        wk.days.forEach(day => {
+          html += '<div class="day ' + day.status + '">';
+          html += '<div class="day__date"><div class="day__num">' + day.date + '</div><div class="day__wd">' + WD[day.dow] + '</div></div>';
+          html += '<div class="day__meta">';
+          if (day.status === 'closed') html += '<div class="day__tag muted">—</div>';
+          else if (day.phase) html += '<div class="day__tag ' + day.phase.tag.toLowerCase() + '">' + day.phase.tag + '</div>';
+          html += '<div class="day__status">' + (day.status === 'closed' ? 'closed' : ('Day ' + day.dayNum + (day.status === 'today' ? ' · TODAY' : ''))) + '</div>';
+          html += '</div>';
+          html += '<div class="day__body">';
+          if (day.status === 'closed'){
+            html += '<div class="day__activity placeholder">' + escapeHtml(day.holidayLabel || 'Closed') + '</div>';
+          } else {
+            if (day.activity){
+              html += '<div class="day__activity">' + escapeHtml(day.activity) + '</div>';
+            } else if (day.status === 'future') {
+              html += '<div class="day__activity placeholder">Plan set by Alessio at start of day</div>';
+            } else if (day.status === 'today') {
+              html += '<div class="day__activity placeholder">Today\'s plan set by Alessio at start of day</div>';
+            }
+            const placeholder = day.status === 'today' ? 'Notes for today — what worked, what was hard, what tomorrow…' : (day.status === 'past' ? 'No notes for this day' : 'Notes…');
+            html += '<textarea class="day__notes" placeholder="' + placeholder + '" data-day="' + day.iso + '" oninput="window.saveOwnNote(' + JSON.stringify(internId) + ', this.dataset.day, this.value, this)">' + escapeHtml(day.notes) + '</textarea>';
+          }
+          html += '</div></div>';
+        });
+        html += '</div>';
+      });
+
+      document.getElementById('portalContent').innerHTML = html;
+
+      // Auto-scroll to today
+      setTimeout(() => {
+        const t = document.querySelector('.day.today');
+        if (t) t.scrollIntoView({ block:'center', behavior:'auto' });
+      }, 0);
+    }
+
+    function renderNoAccess(email, errMsg){
+      const html = '<div class="no-access"><h2>This email isn\'t registered as an intern</h2>'
+        + '<p>You\'re signed in as <code>' + escapeHtml(email) + '</code>.</p>'
+        + '<p>Ask Alessio to set your email in the intern profile, then sign in again.</p>'
+        + (errMsg ? '<p style="color:var(--text-xs);font-size:11px;">' + escapeHtml(errMsg) + '</p>' : '')
+        + '</div>';
+      document.getElementById('portalContent').innerHTML = html;
+    }
+
+    // ── Notes save (debounced) ────────────────────────────────────────
+    const saveTimers = {};
+    window.saveOwnNote = function(internId, date, value, el){
+      const key = internId + '|' + date;
+      clearTimeout(saveTimers[key]);
+      if (el) el.dataset.saveState = 'typing';
+      saveTimers[key] = setTimeout(async () => {
+        try {
+          const { error } = await supa.from('intern_notes').upsert({
+            intern_id: internId,
+            day_date: date,
+            notes: value,
+            written_by: 'intern'
+          }, { onConflict: 'intern_id,day_date' });
+          if (error){ if (el) el.dataset.saveState = 'error'; return; }
+          if (el){
+            el.dataset.saveState = 'saved';
+            setTimeout(() => { if (el.dataset.saveState === 'saved') el.dataset.saveState = ''; }, 1500);
+          }
+        } catch(e){ if (el) el.dataset.saveState = 'error'; }
+      }, 600);
+    };
+
+    // ── Boot ──────────────────────────────────────────────────────────
+    (async function boot(){
+      show('boot');
+      // Handle magic-link callback: parses URL hash → session
+      const { data: { session } } = await supa.auth.getSession();
+      if (session && session.user){
+        show('portal');
+        await loadPortal(session);
+      } else {
+        show('signin');
+      }
+      // Watch for sign-in events (magic-link returning while page open)
+      supa.auth.onAuthStateChange(async (_event, sess) => {
+        if (sess && sess.user){
+          show('portal');
+          await loadPortal(sess);
+        } else {
+          show('signin');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
