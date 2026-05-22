@@ -239,14 +239,23 @@
     };
 
     // ── Portal render ─────────────────────────────────────────────────
+    const STAFF_EMAILS = ['alessio.zilli@azcustomknives.com', 'admin@azcustomknives.com'];
+
     async function loadPortal(session){
       const email = (session.user && session.user.email || '').toLowerCase();
-      document.getElementById('userName').textContent = email;
+      const isStaff = STAFF_EMAILS.includes(email);
+      document.getElementById('userName').textContent = email + (isStaff ? ' · staff' : '');
 
-      // Fetch the intern row matching the signed-in email
-      const { data: intern, error: e1 } = await supa.from('interns').select('*').eq('email', email).maybeSingle();
+      // Staff can use ?as=<slug> to view any intern's page
+      const asSlug = new URLSearchParams(window.location.search).get('as');
+      let intern, e1;
+      if (isStaff && asSlug){
+        ({ data: intern, error: e1 } = await supa.from('interns').select('*').eq('slug', asSlug).maybeSingle());
+      } else {
+        ({ data: intern, error: e1 } = await supa.from('interns').select('*').eq('email', email).maybeSingle());
+      }
       if (e1){ renderNoAccess(email, e1.message); return; }
-      if (!intern){ renderNoAccess(email, null); return; }
+      if (!intern){ renderNoAccess(email, asSlug ? ('no intern with slug "' + asSlug + '"') : null); return; }
 
       // Load companion data in parallel
       const internId = intern.id;
