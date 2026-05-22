@@ -475,10 +475,44 @@
     }
 
     // ── Boot ──────────────────────────────────────────────────────────
+
+    // If the CC at alessio.azcustomknives.com is signed in and the user is staff,
+    // copy that session into the portal's isolated auth namespace so staff don't
+    // need to magic-link in again. Safe because:
+    //   1) Same browser, same Supabase project — no cross-origin or cross-account exposure
+    //   2) Only fires when the CC-stored email matches STAFF_EMAILS (alessio.zilli / admin@)
+    //   3) Portal still keeps its own storageKey, so signing out here doesn't sign out the CC
+    async function tryAdoptCCSession(){
+      const CC_KEY = 'sb-twrlvnfszohyrmivdhre-auth-token';
+      try {
+        const raw = localStorage.getItem(CC_KEY);
+        if (!raw) return false;
+        const tok = JSON.parse(raw);
+        const access_token = tok?.access_token;
+        const refresh_token = tok?.refresh_token;
+        const email = (tok?.user?.email || '').toLowerCase();
+        if (!access_token || !refresh_token) return false;
+        if (!STAFF_EMAILS.includes(email)) return false;
+        const { data, error } = await supa.auth.setSession({ access_token, refresh_token });
+        if (error){ console.warn('[interns] CC session adopt failed', error.message); return false; }
+        return !!(data && data.session);
+      } catch(e){
+        console.warn('[interns] CC session sniff threw', e);
+        return false;
+      }
+    }
+
     (async function boot(){
       show('boot');
-      // Handle magic-link callback: parses URL hash → session
-      const { data: { session } } = await supa.auth.getSession();
+      // 1) Magic-link return: parse URL hash → session (default supabase-js behavior on getSession)
+      // 2) If still no session, try adopting the CC's staff session from the shared origin storage
+      let { data: { session } } = await supa.auth.getSession();
+      if (!session){
+        const adopted = await tryAdoptCCSession();
+        if (adopted){
+          ({ data: { session } } = await supa.auth.getSession());
+        }
+      }
       if (session && session.user){
         show('portal');
         await loadPortal(session);
