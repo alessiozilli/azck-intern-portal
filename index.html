@@ -131,6 +131,8 @@
     .day__reply-send:disabled { background:var(--muted); cursor:wait; }
     /* Voice-to-text + translate-to-EN controls (2026-05-31 for Hannes / Corentin) */
     .day__reply-lang { background:var(--bg); color:var(--text); border:1px solid var(--border); height:34px; font-size:11px; padding:0 6px; cursor:pointer; }
+    /* Static lang badge — one fixed language per intern, no picker (Alessio 2026-05-31) */
+    .day__reply-lang-badge { display:inline-flex; align-items:center; gap:4px; height:34px; padding:0 10px; font-family:var(--mono); font-size:11px; color:var(--text-dim); background:var(--bg); border:1px solid var(--border); letter-spacing:0.04em; cursor:default; user-select:none; }
     .day__reply-mic { background:transparent; color:var(--text-dim); border:1px solid var(--border); padding:0 12px; height:34px; cursor:pointer; font-size:14px; display:inline-flex; align-items:center; gap:6px; line-height:1; }
     .day__reply-mic:hover { color:var(--azck-red); border-color:var(--azck-red); }
     .day__reply-mic.recording { background:var(--azck-red); color:#fff; border-color:var(--azck-red); animation:mic-pulse 1s ease-in-out infinite; }
@@ -399,10 +401,11 @@
             // Reply input + send button (intern can only post as 'intern')
             const replyPlaceholder = day.status === 'today' ? 'Write a message for today…' : (day.status === 'past' ? 'Add a note to this day…' : 'Write a message…');
             const defLang = window.getInternDefaultLang ? window.getInternDefaultLang() : 'en-US';
-            const langOpt = function(code, label){ return '<option value="' + code + '"' + (code === defLang ? ' selected' : '') + '>' + label + '</option>'; };
+            const LANG_BADGE = { 'de-DE':'🇩🇪 DE', 'fr-FR':'🇫🇷 FR', 'en-US':'🇬🇧 EN', 'it-IT':'🇮🇹 IT' };
+            const langBadge = LANG_BADGE[defLang] || defLang;
             html += '<div class="day__reply">';
             html += '<textarea class="day__reply-input" data-day="' + day.iso + '" placeholder="' + replyPlaceholder + '" onkeydown="if(event.key===\'Enter\' && (event.metaKey||event.ctrlKey)){ event.preventDefault(); window.postInternMessage(\'' + day.iso + '\', this); }"></textarea>';
-            html += '<select class="day__reply-lang" title="Language for voice recording">' + langOpt('de-DE','DE') + langOpt('fr-FR','FR') + langOpt('en-US','EN') + langOpt('it-IT','IT') + '</select>';
+            html += '<span class="day__reply-lang-badge" title="Voice records in ' + langBadge + ' — language locked per intern">' + langBadge + '</span>';
             html += '<button class="day__reply-mic" type="button" onclick="window.internMic(this)" title="Tap to record · tap again to stop">🎤 Speak</button>';
             html += '<button class="day__reply-translate" type="button" onclick="window.internTranslate(this)" title="Translate the text above into English (replaces in place)">EN ↓</button>';
             html += '<button class="day__reply-send" onclick="window.postInternMessage(\'' + day.iso + '\', this)">Send</button>';
@@ -501,9 +504,12 @@
       if (btn._recog){ try { btn._recog.stop(); } catch(e){} return; }
       const row = btn.closest('.day__reply');
       const ta = row.querySelector('.day__reply-input');
+      // Lang is locked per intern via getInternDefaultLang (Alessio 2026-05-31:
+      // "Hannes German only, Corentin French only"). Old select kept as
+      // fallback if any older render is still in the DOM.
       const langSel = row.querySelector('.day__reply-lang');
-      const lang = (langSel && langSel.value) || 'en-US';
-      try { localStorage.setItem('intern.replyLang', lang); } catch(e){}
+      const lang = (langSel && langSel.value)
+        || (window.getInternDefaultLang ? window.getInternDefaultLang() : 'en-US');
 
       let baseText = ta.value || '';
       if (baseText && !/\s$/.test(baseText)) baseText += ' ';
