@@ -404,7 +404,7 @@
             const langOpt = function(code, label){ return '<option value="' + code + '"' + (code === defLang ? ' selected' : '') + '>' + label + '</option>'; };
             html += '<div class="day__reply">';
             html += '<textarea class="day__reply-input" data-day="' + day.iso + '" placeholder="' + replyPlaceholder + '" onkeydown="if(event.key===\'Enter\' && (event.metaKey||event.ctrlKey)){ event.preventDefault(); window.postInternMessage(\'' + day.iso + '\', this); }"></textarea>';
-            html += '<select class="day__reply-lang" title="Language for voice recording">' + langOpt('de-DE','🇩🇪 DE') + langOpt('fr-FR','🇫🇷 FR') + langOpt('en-US','🇬🇧 EN') + '</select>';
+            html += '<select class="day__reply-lang" onchange="window.internLangSave(this)" title="Language for voice recording">' + langOpt('de-DE','🇩🇪 DE') + langOpt('fr-FR','🇫🇷 FR') + langOpt('en-US','🇬🇧 EN') + '</select>';
             html += '<button class="day__reply-mic" type="button" onclick="window.internMic(this)" title="Tap to record · tap again to stop">🎤 Speak</button>';
             html += '<button class="day__reply-translate" type="button" onclick="window.internTranslate(this)" title="Translate the text above into English (replaces in place)">EN ↓</button>';
             html += '<button class="day__reply-send" onclick="window.postInternMessage(\'' + day.iso + '\', this)">Send</button>';
@@ -484,14 +484,29 @@
     // No API keys (gtx endpoint is public; speech recognition is built-in
     // to Chrome / Edge / Safari).
     window.getInternDefaultLang = function(){
-      try {
-        const v = localStorage.getItem('intern.replyLang');
-        if (v) return v;
-      } catch(e){}
+      // Per-intern saved choice wins; otherwise native by slug; otherwise EN.
       const slug = (window._internCtx && window._internCtx.slug) || '';
+      try {
+        if (slug) {
+          const v = localStorage.getItem('intern.replyLang.' + slug);
+          if (v) return v;
+        }
+      } catch(e){}
       if (/hannes/i.test(slug)) return 'de-DE';
       if (/corentin/i.test(slug)) return 'fr-FR';
       return 'en-US';
+    };
+
+    // Save per-intern on any dropdown change — survives refresh, syncs all days.
+    window.internLangSave = function(sel){
+      const lang = sel && sel.value;
+      const slug = (window._internCtx && window._internCtx.slug) || '';
+      if (slug && lang) {
+        try { localStorage.setItem('intern.replyLang.' + slug, lang); } catch(e){}
+      }
+      document.querySelectorAll('.day__reply-lang').forEach(function(other){
+        if (other !== sel) other.value = lang;
+      });
     };
 
     window.internMic = function(btn){
@@ -503,11 +518,14 @@
       if (btn._recog){ try { btn._recog.stop(); } catch(e){} return; }
       const row = btn.closest('.day__reply');
       const ta = row.querySelector('.day__reply-input');
-      // 3-option global picker (DE / FR / EN). User's pick persists globally.
+      // 3-option per-intern picker (DE / FR / EN). Saved per-slug.
       const langSel = row.querySelector('.day__reply-lang');
       const lang = (langSel && langSel.value)
         || (window.getInternDefaultLang ? window.getInternDefaultLang() : 'en-US');
-      try { localStorage.setItem('intern.replyLang', lang); } catch(e){}
+      try {
+        const slug = (window._internCtx && window._internCtx.slug) || '';
+        if (slug) localStorage.setItem('intern.replyLang.' + slug, lang);
+      } catch(e){}
 
       let baseText = ta.value || '';
       if (baseText && !/\s$/.test(baseText)) baseText += ' ';
