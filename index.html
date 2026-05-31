@@ -122,13 +122,22 @@
     .msg--reanna   { border-left-color:#7bcfa6; background:rgba(123,207,166,0.08); }
     .msg--reanna   .msg__who { color:#9be0bd; }
 
-    .day__reply { display:flex; gap:6px; margin-top:6px; align-items:flex-end; }
-    .day__reply-input { flex:1; min-height:34px; max-height:160px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:7px 10px; font-family:var(--sans); font-size:12px; line-height:1.4; resize:vertical; }
+    .day__reply { display:flex; gap:6px; margin-top:6px; align-items:flex-end; flex-wrap:wrap; }
+    .day__reply-input { flex:1; min-width:200px; min-height:34px; max-height:160px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:7px 10px; font-family:var(--sans); font-size:12px; line-height:1.4; resize:vertical; }
     .day__reply-input:focus { outline:none; border-color:var(--azck-red); }
     .day.today .day__reply-input { border-color:var(--azck-red-dim); }
     .day__reply-send { background:var(--azck-red); color:#fff; border:0; padding:8px 14px; font-family:var(--sans); font-size:11px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; cursor:pointer; height:34px; }
     .day__reply-send:hover { background:var(--azck-red-hi); }
     .day__reply-send:disabled { background:var(--muted); cursor:wait; }
+    /* Voice-to-text + translate-to-EN controls (2026-05-31 for Hannes / Corentin) */
+    .day__reply-lang { background:var(--bg); color:var(--text); border:1px solid var(--border); height:34px; font-size:11px; padding:0 6px; cursor:pointer; }
+    .day__reply-mic { background:transparent; color:var(--text-dim); border:1px solid var(--border); padding:0 12px; height:34px; cursor:pointer; font-size:14px; display:inline-flex; align-items:center; gap:6px; line-height:1; }
+    .day__reply-mic:hover { color:var(--azck-red); border-color:var(--azck-red); }
+    .day__reply-mic.recording { background:var(--azck-red); color:#fff; border-color:var(--azck-red); animation:mic-pulse 1s ease-in-out infinite; }
+    @keyframes mic-pulse { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
+    .day__reply-translate { background:transparent; color:var(--text-dim); border:1px solid var(--border); padding:0 10px; height:34px; cursor:pointer; font-size:11px; font-family:inherit; letter-spacing:0.06em; text-transform:uppercase; }
+    .day__reply-translate:hover { color:var(--azck-red); border-color:var(--azck-red); }
+    .day__reply-translate:disabled { opacity:0.5; cursor:wait; }
 
     .no-access { text-align:center; padding:60px 20px; }
     .no-access h2 { font-family:var(--display); font-size:22px; color:var(--azck-red); margin:0 0 12px; }
@@ -389,8 +398,13 @@
             }
             // Reply input + send button (intern can only post as 'intern')
             const replyPlaceholder = day.status === 'today' ? 'Write a message for today…' : (day.status === 'past' ? 'Add a note to this day…' : 'Write a message…');
+            const defLang = window.getInternDefaultLang ? window.getInternDefaultLang() : 'en-US';
+            const langOpt = function(code, label){ return '<option value="' + code + '"' + (code === defLang ? ' selected' : '') + '>' + label + '</option>'; };
             html += '<div class="day__reply">';
-            html += '<textarea class="day__reply-input" data-day="' + day.iso + '" placeholder="' + replyPlaceholder + '" onkeydown="if(event.key===\'Enter\' && (event.metaKey||event.ctrlKey)){ event.preventDefault(); this.nextElementSibling.click(); }"></textarea>';
+            html += '<textarea class="day__reply-input" data-day="' + day.iso + '" placeholder="' + replyPlaceholder + '" onkeydown="if(event.key===\'Enter\' && (event.metaKey||event.ctrlKey)){ event.preventDefault(); window.postInternMessage(\'' + day.iso + '\', this); }"></textarea>';
+            html += '<select class="day__reply-lang" title="Language for voice recording">' + langOpt('de-DE','DE') + langOpt('fr-FR','FR') + langOpt('en-US','EN') + langOpt('it-IT','IT') + '</select>';
+            html += '<button class="day__reply-mic" type="button" onclick="window.internMic(this)" title="Tap to record · tap again to stop">🎤 Speak</button>';
+            html += '<button class="day__reply-translate" type="button" onclick="window.internTranslate(this)" title="Translate the text above into English (replaces in place)">EN ↓</button>';
             html += '<button class="day__reply-send" onclick="window.postInternMessage(\'' + day.iso + '\', this)">Send</button>';
             html += '</div>';
           }
@@ -428,9 +442,14 @@
       return MONTHS[d.getMonth()] + ' ' + d.getDate() + ' · ' + hh + ':' + mm;
     }
 
-    // Intern-side post — author always 'intern' (RLS enforces this)
-    window.postInternMessage = async function(date, btn){
-      const ta = btn.previousElementSibling;
+    // Intern-side post — author always 'intern' (RLS enforces this).
+    // `el` is either the Send button OR the textarea (Ctrl/Cmd+Enter path).
+    window.postInternMessage = async function(date, el){
+      const replyRow = el && el.closest ? el.closest('.day__reply') : null;
+      if (!replyRow) { console.warn('[interns] postInternMessage: no .day__reply row'); return; }
+      const ta = replyRow.querySelector('.day__reply-input');
+      const btn = replyRow.querySelector('.day__reply-send');
+      if (!ta || !btn) return;
       const text = (ta.value || '').trim();
       if (!text) return;
       const ctx = window._internCtx;
@@ -453,6 +472,103 @@
         btn.style.background = '#e5534b';
       } finally {
         btn.disabled = false; btn.textContent = 'Send';
+      }
+    };
+
+    // ── Voice-to-text + translate (Web Speech API + Google translate gtx) ─
+    // Hannes (DE) and Corentin (FR) don't write English well. Mic = speak in
+    // selected language → text appears in the textarea. Translate button =
+    // replace the textarea content with an English translation in place.
+    // No API keys (gtx endpoint is public; speech recognition is built-in
+    // to Chrome / Edge / Safari).
+    window.getInternDefaultLang = function(){
+      try {
+        const v = localStorage.getItem('intern.replyLang');
+        if (v) return v;
+      } catch(e){}
+      const slug = (window._internCtx && window._internCtx.slug) || '';
+      if (/hannes/i.test(slug)) return 'de-DE';
+      if (/corentin/i.test(slug)) return 'fr-FR';
+      return 'en-US';
+    };
+
+    window.internMic = function(btn){
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR){
+        alert("Your browser can't record voice. Use Chrome, Edge, or Safari.");
+        return;
+      }
+      if (btn._recog){ try { btn._recog.stop(); } catch(e){} return; }
+      const row = btn.closest('.day__reply');
+      const ta = row.querySelector('.day__reply-input');
+      const langSel = row.querySelector('.day__reply-lang');
+      const lang = (langSel && langSel.value) || 'en-US';
+      try { localStorage.setItem('intern.replyLang', lang); } catch(e){}
+
+      let baseText = ta.value || '';
+      if (baseText && !/\s$/.test(baseText)) baseText += ' ';
+
+      const recog = new SR();
+      recog.lang = lang;
+      recog.continuous = true;
+      recog.interimResults = true;
+
+      btn._recog = recog;
+      btn.classList.add('recording');
+      const origLabel = btn.textContent;
+      btn.textContent = '⏺ Stop';
+
+      recog.onresult = function(e){
+        let interim = '', final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++){
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) final += t + ' ';
+          else interim += t;
+        }
+        ta.value = baseText + final + interim;
+        if (final) baseText += final;
+      };
+      recog.onerror = function(ev){ console.warn('[mic] error', ev && ev.error); };
+      recog.onend = function(){
+        btn.classList.remove('recording');
+        btn.textContent = origLabel || '🎤 Speak';
+        btn._recog = null;
+      };
+      try { recog.start(); }
+      catch(e){
+        console.warn('[mic] start failed', e);
+        btn.classList.remove('recording');
+        btn.textContent = origLabel || '🎤 Speak';
+        btn._recog = null;
+      }
+    };
+
+    window.internTranslate = async function(btn){
+      const row = btn.closest('.day__reply');
+      const ta = row.querySelector('.day__reply-input');
+      const text = (ta.value || '').trim();
+      if (!text) return;
+      const orig = btn.textContent;
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(text);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('translate HTTP ' + res.status);
+        const json = await res.json();
+        const translated = (json && json[0] || []).map(function(seg){ return seg[0] || ''; }).join('');
+        if (translated && translated.trim()){
+          ta.value = translated;
+          btn.textContent = orig;
+        } else {
+          btn.textContent = '(no result)';
+          setTimeout(function(){ btn.textContent = orig; }, 1600);
+        }
+      } catch(e){
+        console.warn('[translate] failed', e);
+        btn.textContent = '(failed)';
+        setTimeout(function(){ btn.textContent = orig; }, 1600);
+      } finally {
+        btn.disabled = false;
       }
     };
 
